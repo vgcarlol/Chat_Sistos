@@ -376,7 +376,20 @@
      const gchar *msg_text = gtk_entry_get_text(GTK_ENTRY(app->entry_message));
      if (!msg_text || strlen(msg_text) == 0)
          return;
-  
+
+
+    if (strncmp(msg_text, "/info ", 6) == 0) {
+        const char *usuario_objetivo = msg_text + 6;  // omite "/info "
+        cJSON *root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "type", "user_info");
+        cJSON_AddStringToObject(root, "sender", app->username);
+        cJSON_AddStringToObject(root, "target", usuario_objetivo);
+        char timestamp[64];
+        get_timestamp(timestamp, sizeof(timestamp));
+        cJSON_AddStringToObject(root, "timestamp", timestamp);
+        send_cjson(app, root);
+        cJSON_Delete(root);
+    
      if (strncmp(msg_text, "/salir", 6) == 0) {
          cJSON *root = cJSON_CreateObject();
          cJSON_AddStringToObject(root, "type", "disconnect");
