@@ -1,12 +1,6 @@
 /******************************************************************************
- * Cliente de Chat con Interfaz Gráfica (GTK3) + libwebsockets + cJSON
+ * Cliente de Chat con Interfaz Gráfica
  * ---------------------------------------------------------------------------
- * - Cumple con el "Protocolo con WebSockets" (registro, broadcast, privado,
- *   listar usuarios, cambiar estado, etc.).
- * - Usa un hilo para lws_service, evitando bloquear la interfaz gráfica.
- * - Usa cJSON para parsear las respuestas del servidor y mostrar mensajes
- *   más amigables al usuario.
- *
  * Requerimientos en Ubuntu:
  *   sudo apt-get install libgtk-3-dev libwebsockets-dev libcjson-dev
  *
@@ -17,9 +11,7 @@
  *
  * Ejecutar:
  *   ./chat_client_gtk
- *
- * Nota: Se ha reducido el tiempo de espera en el loop de libwebsockets para
- *       mejorar la reactividad de las acciones.
+
  ******************************************************************************/
 
  #include <gtk/gtk.h>
@@ -137,7 +129,7 @@
  static void handle_server_message(AppData *app, const char *json_str) {
      cJSON *root = cJSON_Parse(json_str);
      if (!root) {
-         show_message(app, "Recibido mensaje no-JSON (o inválido)");
+         show_message(app, " ");
          return;
      }
  
