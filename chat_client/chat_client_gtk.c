@@ -377,7 +377,35 @@
      if (!msg_text || strlen(msg_text) == 0)
          return;
 
+    // Comando para desconectar
+    if (strncmp(msg_text, "/salir", 6) == 0) {
+        cJSON *root = cJSON_CreateObject();
+        cJSON_AddStringToObject(root, "type", "disconnect");
+        cJSON_AddStringToObject(root, "sender", app->username);
+        cJSON_AddStringToObject(root, "content", "Cierre de sesión");
+        char timestamp[64];
+        get_timestamp(timestamp, sizeof(timestamp));
+        cJSON_AddStringToObject(root, "timestamp", timestamp);
+        send_cjson(app, root);
+        cJSON_Delete(root);
+        return;
+    }
 
+    // Comando de ayuda
+    if (strcmp(msg_text, "/help") == 0 || strcmp(msg_text, "/ayuda") == 0) {
+        const char *help_msg =
+            "Comandos disponibles:\n"
+            "/help o /ayuda - Muestra esta ayuda.\n"
+            "/info <usuario> - Solicita información de un usuario.\n"
+            "/salir - Desconecta del chat.\n"
+            "@<usuario> <mensaje> - Envía mensaje privado.\n"
+            "Cualquier otro mensaje se envía como broadcast.";
+        show_message(app, help_msg);
+        gtk_entry_set_text(GTK_ENTRY(app->entry_message), "");
+        return;
+    }
+
+    // Comando para solicitar información de un usuario: /info <usuario>
     if (strncmp(msg_text, "/info ", 6) == 0) {
         const char *usuario_objetivo = msg_text + 6;  // omite "/info "
         cJSON *root = cJSON_CreateObject();
@@ -389,51 +417,36 @@
         cJSON_AddStringToObject(root, "timestamp", timestamp);
         send_cjson(app, root);
         cJSON_Delete(root);
-    
-     if (strncmp(msg_text, "/salir", 6) == 0) {
-         cJSON *root = cJSON_CreateObject();
-         cJSON_AddStringToObject(root, "type", "disconnect");
-         cJSON_AddStringToObject(root, "sender", app->username);
-         cJSON_AddStringToObject(root, "content", "Cierre de sesión");
-         char timestamp[64];
-         get_timestamp(timestamp, sizeof(timestamp));
-         cJSON_AddStringToObject(root, "timestamp", timestamp);
-  
-         send_cjson(app, root);
-         cJSON_Delete(root);
-         return;
-     }
-  
-     cJSON *root = cJSON_CreateObject();
-     if (msg_text[0] == '@') {
-         const char *space = strchr(msg_text, ' ');
-         if (space) {
-             size_t target_len = space - msg_text - 1;
-             char target[128] = {0};
-             strncpy(target, msg_text + 1, target_len);
-             cJSON_AddStringToObject(root, "type", "private");
-             cJSON_AddStringToObject(root, "target", target);
-  
-             const char *content = space + 1;
-             cJSON_AddStringToObject(root, "content", content);
-         } else {
-             cJSON_AddStringToObject(root, "type", "broadcast");
-             cJSON_AddStringToObject(root, "content", msg_text);
-         }
-     } else {
-         cJSON_AddStringToObject(root, "type", "broadcast");
-         cJSON_AddStringToObject(root, "content", msg_text);
-     }
-  
-     cJSON_AddStringToObject(root, "sender", app->username);
-     char timestamp[64];
-     get_timestamp(timestamp, sizeof(timestamp));
-     cJSON_AddStringToObject(root, "timestamp", timestamp);
-  
-     send_cjson(app, root);
-     cJSON_Delete(root);
-  
-     gtk_entry_set_text(GTK_ENTRY(app->entry_message), "");
+    } else {
+        // Procesamiento normal de mensajes (broadcast o privado)
+        cJSON *root = cJSON_CreateObject();
+        if (msg_text[0] == '@') {
+            const char *space = strchr(msg_text, ' ');
+            if (space) {
+                size_t target_len = space - msg_text - 1; // omitir '@'
+                char target[128] = {0};
+                strncpy(target, msg_text + 1, target_len);
+                cJSON_AddStringToObject(root, "type", "private");
+                cJSON_AddStringToObject(root, "target", target);
+                const char *content = space + 1;
+                cJSON_AddStringToObject(root, "content", content);
+            } else {
+                cJSON_AddStringToObject(root, "type", "broadcast");
+                cJSON_AddStringToObject(root, "content", msg_text);
+            }
+        } else {
+            cJSON_AddStringToObject(root, "type", "broadcast");
+            cJSON_AddStringToObject(root, "content", msg_text);
+        }
+        cJSON_AddStringToObject(root, "sender", app->username);
+        char timestamp[64];
+        get_timestamp(timestamp, sizeof(timestamp));
+        cJSON_AddStringToObject(root, "timestamp", timestamp);
+        send_cjson(app, root);
+        cJSON_Delete(root);
+    }
+    gtk_entry_set_text(GTK_ENTRY(app->entry_message), "");
+
  }
   
  // Botón "Listar usuarios"
