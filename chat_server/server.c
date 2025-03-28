@@ -1,11 +1,5 @@
-/* chat_server_threads_full.c
- * Versión completa con soporte multithreading y detección de inactividad.
- * Cumple con el protocolo definido, incluyendo:
- *  - Registro único
- *  - Broadcast y mensajes privados
- *  - Cambio de estado manual y por inactividad
- *  - Consulta de lista de usuarios e info individual
- *  - Desconexión y notificación global
+/* chat_server_threads_fixed.c
+ * Versión mejorada: Corrige crasheos y cumple el protocolo.
  */
 
  #include <stdio.h>
@@ -132,10 +126,7 @@
      pthread_mutex_lock(&clients_mutex);
      Client *c = clients;
      while (c) {
-         cJSON *entry = cJSON_CreateObject();
-         cJSON_AddStringToObject(entry, "name", c->name);
-         cJSON_AddStringToObject(entry, "status", c->status);
-         cJSON_AddItemToArray(array, entry);
+         cJSON_AddItemToArray(array, cJSON_CreateString(c->name));
          c = c->next;
      }
      pthread_mutex_unlock(&clients_mutex);
@@ -181,7 +172,6 @@
          while (c) {
              if (strcmp(c->status, STATUS_ACTIVE) == 0 && difftime(now, c->last_activity) > INACTIVITY_TIMEOUT) {
                  strncpy(c->status, STATUS_INACTIVE, sizeof(c->status)-1);
-                 c->status[sizeof(c->status)-1] = '\0';
                  cJSON *notif = cJSON_CreateObject();
                  cJSON_AddStringToObject(notif, "type", "status_update");
                  cJSON_AddStringToObject(notif, "sender", "server");
@@ -189,15 +179,11 @@
                  cJSON_AddStringToObject(content, "user", c->name);
                  cJSON_AddStringToObject(content, "status", STATUS_INACTIVE);
                  cJSON_AddItemToObject(notif, "content", content);
-                 char ts[64];
-                 get_timestamp(ts, sizeof(ts));
+                 char ts[64]; get_timestamp(ts, sizeof(ts));
                  cJSON_AddStringToObject(notif, "timestamp", ts);
                  char *notif_str = cJSON_PrintUnformatted(notif);
                  Client *tmp = clients;
-                 while (tmp) {
-                     send_ws_text(tmp->wsi, notif_str);
-                     tmp = tmp->next;
-                 }
+                 while (tmp) { send_ws_text(tmp->wsi, notif_str); tmp = tmp->next; }
                  free(notif_str);
                  cJSON_Delete(notif);
              }
@@ -216,27 +202,31 @@
              cJSON *root = cJSON_Parse(msg);
              free(msg);
              if (!root) break;
-             const char *type = cJSON_GetObjectItem(root, "type")->valuestring;
-             const char *sender = cJSON_GetObjectItem(root, "sender")->valuestring;
-             const char *content = cJSON_GetObjectItem(root, "content") ? cJSON_GetObjectItem(root, "content")->valuestring : NULL;
+             cJSON *type_obj = cJSON_GetObjectItem(root, "type");
+             cJSON *sender_obj = cJSON_GetObjectItem(root, "sender");
+             cJSON *content_obj = cJSON_GetObjectItem(root, "content");
+             if (!cJSON_IsString(type_obj) || !cJSON_IsString(sender_obj)) {
+                 cJSON_Delete(root);
+                 break;
+             }
+             const char *type = type_obj->valuestring;
+             const char *sender = sender_obj->valuestring;
+             const char *content = cJSON_IsString(content_obj) ? content_obj->valuestring : NULL;
              Client *client = find_client_by_name(sender);
              if (client) client->last_activity = time(NULL);
+ 
              if (strcmp(type, "register") == 0) {
                  if (find_client_by_name(sender)) {
                      send_json(wsi, "error", "server", NULL, "Nombre de usuario en uso");
                      cJSON_Delete(root);
                      return -1;
                  }
-                 Client *new_client = malloc(sizeof(Client));
+                 Client *new_client = calloc(1, sizeof(Client));
                  new_client->wsi = wsi;
                  strncpy(new_client->name, sender, sizeof(new_client->name)-1);
-                 new_client->name[sizeof(new_client->name)-1] = '\0';
-                 char ip[INET_ADDRSTRLEN];
-                 lws_get_peer_addresses(wsi, lws_get_socket_fd(wsi), NULL, 0, ip, sizeof(ip));
-                 strncpy(new_client->ip, ip, sizeof(new_client->ip)-1);
-                 new_client->ip[sizeof(new_client->ip)-1] = '\0';
+                 const char *peer = lws_get_peer_simple(wsi, new_client->ip, sizeof(new_client->ip));
+                 if (!peer) strncpy(new_client->ip, "desconocido", sizeof(new_client->ip)-1);
                  strncpy(new_client->status, STATUS_ACTIVE, sizeof(new_client->status)-1);
-                 new_client->status[sizeof(new_client->status)-1] = '\0';
                  new_client->last_activity = time(NULL);
                  add_client(new_client);
                  send_json(wsi, "register_success", "server", NULL, "Registro exitoso");
@@ -245,39 +235,42 @@
              } else if (strcmp(type, "broadcast") == 0) {
                  broadcast_json("broadcast", sender, content, NULL);
              } else if (strcmp(type, "private") == 0) {
-                 const char *target = cJSON_GetObjectItem(root, "target")->valuestring;
-                 Client *receiver = find_client_by_name(target);
-                 if (receiver) {
-                     send_json(receiver->wsi, "private", sender, target, content);
-                 } else {
-                     send_json(wsi, "error", "server", NULL, "Usuario no encontrado");
+                 cJSON *target_obj = cJSON_GetObjectItem(root, "target");
+                 if (cJSON_IsString(target_obj)) {
+                     Client *receiver = find_client_by_name(target_obj->valuestring);
+                     if (receiver) {
+                         send_json(receiver->wsi, "private", sender, receiver->name, content);
+                     } else {
+                         send_json(wsi, "error", "server", NULL, "Usuario no encontrado");
+                     }
                  }
              } else if (strcmp(type, "list_users") == 0) {
                  send_user_list(wsi);
              } else if (strcmp(type, "user_info") == 0) {
-                 const char *target = cJSON_GetObjectItem(root, "target")->valuestring;
-                 send_user_info(wsi, target);
-             } else if (strcmp(type, "change_status") == 0) {
-                 if (client && content) {
-                     strncpy(client->status, content, sizeof(client->status)-1);
-                     client->status[sizeof(client->status)-1] = '\0';
-                     cJSON *status_msg = cJSON_CreateObject();
-                     cJSON_AddStringToObject(status_msg, "type", "status_update");
-                     cJSON_AddStringToObject(status_msg, "sender", "server");
-                     cJSON *st = cJSON_CreateObject();
-                     cJSON_AddStringToObject(st, "user", sender);
-                     cJSON_AddStringToObject(st, "status", content);
-                     cJSON_AddItemToObject(status_msg, "content", st);
-                     char ts[64]; get_timestamp(ts, sizeof(ts));
-                     cJSON_AddStringToObject(status_msg, "timestamp", ts);
-                     char *status_str = cJSON_PrintUnformatted(status_msg);
-                     Client *tmp = clients;
-                     while (tmp) { send_ws_text(tmp->wsi, status_str); tmp = tmp->next; }
-                     free(status_str);
-                     cJSON_Delete(status_msg);
+                 cJSON *target_obj = cJSON_GetObjectItem(root, "target");
+                 if (cJSON_IsString(target_obj)) {
+                     send_user_info(wsi, target_obj->valuestring);
                  }
+             } else if (strcmp(type, "change_status") == 0 && client && content) {
+                 strncpy(client->status, content, sizeof(client->status)-1);
+                 cJSON *msg = cJSON_CreateObject();
+                 cJSON_AddStringToObject(msg, "type", "status_update");
+                 cJSON_AddStringToObject(msg, "sender", "server");
+                 cJSON *st = cJSON_CreateObject();
+                 cJSON_AddStringToObject(st, "user", sender);
+                 cJSON_AddStringToObject(st, "status", content);
+                 cJSON_AddItemToObject(msg, "content", st);
+                 char ts[64]; get_timestamp(ts, sizeof(ts));
+                 cJSON_AddStringToObject(msg, "timestamp", ts);
+                 char *msg_str = cJSON_PrintUnformatted(msg);
+                 Client *tmp = clients;
+                 while (tmp) { send_ws_text(tmp->wsi, msg_str); tmp = tmp->next; }
+                 free(msg_str);
+                 cJSON_Delete(msg);
              } else if (strcmp(type, "disconnect") == 0) {
-                 broadcast_json("user_disconnected", "server", sender, wsi);
+                 char goodbye[100];
+                 snprintf(goodbye, sizeof(goodbye), "%s ha salido", sender);
+                 broadcast_json("user_disconnected", "server", goodbye, wsi);
                  remove_client(wsi);
                  lws_close_reason(wsi, LWS_CLOSE_STATUS_NORMAL, NULL, 0);
                  cJSON_Delete(root);
