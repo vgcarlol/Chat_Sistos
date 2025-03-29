@@ -13,6 +13,31 @@
  #include <errno.h>
  #include <libwebsockets.h>
  #include <cjson/cJSON.h>
+
+ #include <stdarg.h> // Necesario para va_list
+
+ void log_action(const char *format, ...) {
+    char timestamp[64];
+    get_timestamp(timestamp, sizeof(timestamp));
+
+    // Preparar el mensaje
+    char message[1024];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(message, sizeof(message), format, args);
+    va_end(args);
+
+    // Imprimir en consola
+    printf("[%s] %s\n", timestamp, message);
+    fflush(stdout);
+
+    // Guardar en archivo
+    FILE *log_file = fopen("servidor.log", "a");
+    if (log_file) {
+        fprintf(log_file, "[%s] %s\n", timestamp, message);
+        fclose(log_file);
+    }
+}
  
  #define BUFFER_SIZE 2048
  #define MAX_STATUS_LEN 10
@@ -21,6 +46,9 @@
  #define STATUS_ACTIVE   "ACTIVO"
  #define STATUS_BUSY     "OCUPADO"
  #define STATUS_INACTIVE "INACTIVO"
+
+ void get_timestamp(char *buffer, size_t len);  // ← Esta línea soluciona el warning
+
  
  typedef struct Client {
      struct lws *wsi;
@@ -45,6 +73,7 @@
      pthread_mutex_lock(&clients_mutex);
      new_client->next = clients;
      clients = new_client;
+     log_action("Cliente registrado: %s (%s)", new_client->name, new_client->ip);
      pthread_mutex_unlock(&clients_mutex);
  }
  
@@ -55,6 +84,7 @@
          if (curr->wsi == wsi) {
              if (prev) prev->next = curr->next;
              else clients = curr->next;
+             log_action("Cliente eliminado: %s (%s)", curr->name, curr->ip);
              free(curr);
              break;
          }
@@ -231,6 +261,7 @@
                  add_client(new_client);
                  send_json(wsi, "register_success", "server", NULL, "Registro exitoso");
                  broadcast_json("broadcast", "server", "Nuevo usuario conectado", wsi);
+                 
                  send_user_list(wsi);
              } else if (strcmp(type, "broadcast") == 0) {
                  broadcast_json("broadcast", sender, content, NULL);
