@@ -301,20 +301,25 @@ void get_timestamp(char *buffer, size_t len);
             }
              else if (strcmp(type, "broadcast") == 0) {
                  broadcast_json("broadcast", sender, content, NULL);
+                 log_action("Mensaje público de %s: %s", sender, content);
              } else if (strcmp(type, "private") == 0) {
                  cJSON *target_obj = cJSON_GetObjectItem(root, "target");
                  if (cJSON_IsString(target_obj)) {
                      Client *receiver = find_client_by_name(target_obj->valuestring);
                      if (receiver) {
                          send_json(receiver->wsi, "private", sender, receiver->name, content);
+                         log_action("Mensaje privado de %s a %s: %s", sender, receiver->name, content);
                      } else {
                          send_json(wsi, "error", "server", NULL, "Usuario no encontrado");
+                         log_action("Error: %s intentó enviar mensaje privado a usuario inexistente: %s", sender, target_obj->valuestring);
                      }
                  }
              } else if (strcmp(type, "list_users") == 0) {
                  send_user_list(wsi);
+                 log_action("Solicitud de lista de usuarios por %s", sender);
              } else if (strcmp(type, "user_info") == 0) {
                  cJSON *target_obj = cJSON_GetObjectItem(root, "target");
+                 log_action("Solicitud de información del usuario '%s' hecha por %s", target_obj->valuestring, sender);
                  if (cJSON_IsString(target_obj)) {
                      send_user_info(wsi, target_obj->valuestring);
                  }
@@ -330,6 +335,7 @@ void get_timestamp(char *buffer, size_t len);
                  char ts[64]; get_timestamp(ts, sizeof(ts));
                  cJSON_AddStringToObject(msg, "timestamp", ts);
                  char *msg_str = cJSON_PrintUnformatted(msg);
+                 log_action("Cambio de estado: %s → %s", sender, content);
                  Client *tmp = clients;
                  while (tmp) { send_ws_text(tmp->wsi, msg_str); tmp = tmp->next; }
                  free(msg_str);
