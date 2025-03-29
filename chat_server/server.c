@@ -16,9 +16,11 @@
 
  #include <stdarg.h> // Necesario para va_list
 
+ 
+void get_timestamp(char *buffer, size_t len);
+
  void log_action(const char *format, ...) {
     char timestamp[64];
-    get_timestamp(timestamp, sizeof(timestamp));
 
     // Preparar el mensaje
     char message[1024];
@@ -224,6 +226,33 @@
      return NULL;
  }
  
+ void* cliente_session(void* arg) {
+    Client* client = (Client*)arg;
+    
+    char logmsg[128];
+    snprintf(logmsg, sizeof(logmsg), "Hilo creado para el cliente: %s (%s)", client->name, client->ip);
+    log_action("%s", logmsg);
+
+    // Aquí se puede simular alguna actividad del cliente
+    while (!force_exit) {
+        pthread_mutex_lock(&clients_mutex);
+        time_t now = time(NULL);
+        double idle = difftime(now, client->last_activity);
+        pthread_mutex_unlock(&clients_mutex);
+
+        if (idle > 120) {
+            // Por ejemplo, simular que este hilo detecta inactividad o ejecuta acciones personalizadas
+            log_action("Cliente %s está inactivo por más de 120s (monitoreado por su hilo)", client->name);
+        }
+
+        sleep(10); // Intervalo de simulación
+    }
+
+    return NULL;
+}
+
+
+
  int callback_chat(struct lws *wsi, enum lws_callback_reasons reason, void *user, void *in, size_t len) {
      switch (reason) {
          case LWS_CALLBACK_RECEIVE: {
@@ -246,24 +275,31 @@
              if (client) client->last_activity = time(NULL);
  
              if (strcmp(type, "register") == 0) {
-                 if (find_client_by_name(sender)) {
-                     send_json(wsi, "error", "server", NULL, "Nombre de usuario en uso");
-                     cJSON_Delete(root);
-                     return -1;
-                 }
-                 Client *new_client = calloc(1, sizeof(Client));
-                 new_client->wsi = wsi;
-                 strncpy(new_client->name, sender, sizeof(new_client->name)-1);
-                 const char *peer = lws_get_peer_simple(wsi, new_client->ip, sizeof(new_client->ip));
-                 if (!peer) strncpy(new_client->ip, "desconocido", sizeof(new_client->ip)-1);
-                 strncpy(new_client->status, STATUS_ACTIVE, sizeof(new_client->status)-1);
-                 new_client->last_activity = time(NULL);
-                 add_client(new_client);
-                 send_json(wsi, "register_success", "server", NULL, "Registro exitoso");
-                 broadcast_json("broadcast", "server", "Nuevo usuario conectado", wsi);
-                 
-                 send_user_list(wsi);
-             } else if (strcmp(type, "broadcast") == 0) {
+                if (find_client_by_name(sender)) {
+                    send_json(wsi, "error", "server", NULL, "Nombre de usuario en uso");
+                    cJSON_Delete(root);
+                    return -1;
+                }
+            
+                Client *new_client = calloc(1, sizeof(Client));
+                new_client->wsi = wsi;
+                strncpy(new_client->name, sender, sizeof(new_client->name)-1);
+                const char *peer = lws_get_peer_simple(wsi, new_client->ip, sizeof(new_client->ip));
+                if (!peer) strncpy(new_client->ip, "desconocido", sizeof(new_client->ip)-1);
+                strncpy(new_client->status, STATUS_ACTIVE, sizeof(new_client->status)-1);
+                new_client->last_activity = time(NULL);
+            
+                add_client(new_client);
+            
+                pthread_t client_thread;
+                pthread_create(&client_thread, NULL, cliente_session, new_client);
+                pthread_detach(client_thread);
+            
+                send_json(wsi, "register_success", "server", NULL, "Registro exitoso");
+                broadcast_json("broadcast", "server", "Nuevo usuario conectado", wsi);
+                send_user_list(wsi);
+            }
+             else if (strcmp(type, "broadcast") == 0) {
                  broadcast_json("broadcast", sender, content, NULL);
              } else if (strcmp(type, "private") == 0) {
                  cJSON *target_obj = cJSON_GetObjectItem(root, "target");
